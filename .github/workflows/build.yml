@@ -1,0 +1,74 @@
+# Compila e testa em Linux, macOS e Windows a cada push.
+# Ao enviar uma tag "v*" (ex.: git tag v1.0 && git push --tags), publica uma
+# Release com os três executáveis prontos para download, sem instalação.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artefato: hypervisor-linux-x64
+            arquivo: build/hypervisor
+            flags_extra: -static
+          - os: macos-latest
+            artefato: hypervisor-macos-arm64
+            arquivo: build/hypervisor
+            flags_extra: ""
+          - os: windows-latest
+            artefato: hypervisor-windows-x64.exe
+            arquivo: build/hypervisor.exe
+            flags_extra: -static
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compilar
+        run: |
+          mkdir -p build
+          gcc -std=c99 -Wall -Wextra -pedantic -O2 ${{ matrix.flags_extra }} \
+              -o ${{ matrix.arquivo }} src/*.c
+
+      - name: Testes unitarios
+        run: |
+          gcc -std=c99 -Wall -Wextra -pedantic -O2 -o build/testes_unitarios \
+              tests/testes_unitarios.c $(ls src/*.c | grep -v main.c)
+          ./build/testes_unitarios
+
+      - name: Testes de integracao
+        run: sh tests/testes_integracao.sh ./${{ matrix.arquivo }}
+
+      - name: Renomear executavel
+        run: cp ${{ matrix.arquivo }} ${{ matrix.artefato }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artefato }}
+          path: ${{ matrix.artefato }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
